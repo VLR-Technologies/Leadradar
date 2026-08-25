@@ -1,0 +1,74 @@
+from app.normalizers.contact import normalize_email, normalize_phone, normalize_website_url
+from app.providers.enrichment.website import extract_contacts, find_contact_links
+
+
+def test_normalizes_indian_mobile_phone_variants() -> None:
+    assert normalize_phone("+91 9876543210") == "+919876543210"
+    assert normalize_phone("09876543210") == "+919876543210"
+    assert normalize_phone("98765 43210") == "+919876543210"
+    assert normalize_phone("+91-98765-43210") == "+919876543210"
+
+
+def test_preserves_indian_landline_with_std_code() -> None:
+    assert normalize_phone("040-12345678") == "040-12345678"
+
+
+def test_extracts_tel_visible_phone_and_public_emails() -> None:
+    phones, emails = extract_contacts(
+        """
+        <html><body>
+          <h1>Contact ABC Dental</h1>
+          <a href="tel:+91-98765-43210">Call us</a>
+          <p>Phone: 040-12345678</p>
+          <a href="mailto:Info@ABCDental.in?subject=Appointment">Email</a>
+          <p>Support@ABCDental.in</p>
+          <p>example@example.com</p>
+        </body></html>
+        """,
+        "https://abcdental.in/contact-us",
+    )
+
+    assert [(phone.value, phone.confidence) for phone in phones] == [
+        ("+919876543210", "high"),
+        ("040-12345678", "medium"),
+    ]
+    assert [(email.value, email.confidence) for email in emails] == [
+        ("Info@abcdental.in", "high"),
+        ("Support@abcdental.in", "medium"),
+    ]
+
+
+def test_duplicate_emails_and_placeholders_are_rejected() -> None:
+    _, emails = extract_contacts(
+        """
+        <a href="mailto:hello@clinic.in">Mail</a>
+        <p>hello@clinic.in</p>
+        <p>test@example.com</p>
+        """,
+        "https://clinic.in/contact",
+    )
+
+    assert [email.value for email in emails] == ["hello@clinic.in"]
+    assert normalize_email("mailto:test@example.com") is None
+
+
+def test_contact_links_stay_on_the_same_registrable_domain() -> None:
+    links = find_contact_links(
+        """
+        <a href="/contact-us">Contact Us</a>
+        <a href="https://help.clinic.co.in/about">About</a>
+        <a href="https://facebook.com/clinic">Contact on Facebook</a>
+        <a href="https://evil.example/contact">Contact</a>
+        """,
+        "https://www.clinic.co.in/",
+    )
+
+    assert links == (
+        "https://www.clinic.co.in/contact-us",
+        "https://help.clinic.co.in/about",
+    )
+
+
+def test_normalizes_website_urls_without_forcing_existing_scheme() -> None:
+    assert normalize_website_url("company.in") == "https://company.in"
+    assert normalize_website_url("http://www.company.in/") == "http://www.company.in"

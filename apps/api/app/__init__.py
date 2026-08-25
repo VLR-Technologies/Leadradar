@@ -1,0 +1,2 @@
+"""Lead Radar API application."""
+
