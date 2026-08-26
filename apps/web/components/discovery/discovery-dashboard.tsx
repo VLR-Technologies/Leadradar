@@ -277,7 +277,7 @@ export function DiscoveryDashboard() {
 
   return (
     <div className="min-h-screen">
-      <header className="border-b border-[#dce5e0] bg-white/92 backdrop-blur">
+      <header className="sticky top-0 z-40 border-b border-[#dce5e0] bg-white/92 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[1480px] items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
             <div className="relative flex size-9 items-center justify-center overflow-hidden rounded-xl bg-[#177454] text-white shadow-[0_5px_14px_rgba(23,116,84,0.2)]">
