@@ -217,19 +217,19 @@ export function BusinessTable({
         ))}
       </div>
 
-      <div className="hidden overflow-x-auto md:block">
+      <div className="hidden max-h-[70vh] overflow-auto md:block">
         <table className="w-full min-w-[1180px] border-collapse text-left">
-          <thead>
-            <tr className="bg-[#f8faf9] text-[11px] font-bold tracking-[0.055em] text-[#68756e] uppercase">
-              <th className="px-6 py-3.5">Business</th>
-              <th className="px-4 py-3.5">Category</th>
-              <th className="px-4 py-3.5">Location</th>
-              <th className="px-4 py-3.5">Phone</th>
-              <th className="px-4 py-3.5">Email</th>
-              <th className="px-4 py-3.5">Website</th>
-              <th className="px-4 py-3.5">Source</th>
-              <th className="px-4 py-3.5">Action</th>
-              <th className="w-10 px-3 py-3.5"><span className="sr-only">Open details</span></th>
+            <thead>
+            <tr className="text-[11px] font-bold tracking-[0.055em] text-[#68756e] uppercase">
+              <th className="sticky top-0 z-10 bg-[#f8faf9] px-6 py-3.5">Business</th>
+              <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">Category</th>
+              <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">Location</th>
+              <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">Phone</th>
+              <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">Email</th>
+              <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">Website</th>
+              <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">Source</th>
+              <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">Action</th>
+              <th className="sticky top-0 z-10 w-10 bg-[#f8faf9] px-3 py-3.5"><span className="sr-only">Open details</span></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#e8edea]">
