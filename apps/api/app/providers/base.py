@@ -25,7 +25,18 @@ class LocationResolutionError(ProviderError):
     """The provider could not resolve the location to a safe search area."""
 
 
+class ProviderNotConfiguredError(ProviderError):
+    """The provider is intentionally unavailable for the current configuration."""
+
+
+class AllProvidersFailedError(ProviderError):
+    """No configured discovery provider returned a usable response."""
+
+
 class BusinessProvider(Protocol):
+    name: str
+    display_name: str
+
     async def discover(
         self,
         *,

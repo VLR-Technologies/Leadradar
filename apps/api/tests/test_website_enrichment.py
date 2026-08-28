@@ -76,6 +76,14 @@ async def test_verifies_official_website_and_inspects_contact_page() -> None:
         "https://abcdental.in",
         "https://abcdental.in/contact-us",
     )
+    assert result.contact_page_url == "https://abcdental.in/contact-us"
+    assert result.website_audit is not None
+    assert result.website_audit.reachable is True
+    assert result.website_audit.uses_https is True
+    assert result.website_audit.contact_page_present is True
+    assert result.website_audit.email_present is True
+    assert result.website_audit.phone_present is True
+    assert result.website_audit.label == "Potential improvement opportunity"
 
 
 @pytest.mark.asyncio
@@ -173,4 +181,27 @@ async def test_explicit_http_forbidden_response_is_access_denied() -> None:
         await provider(handler).inspect(
             business=business(),
             website_url="https://abcdental.in",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "unsafe_url",
+    [
+        "http://127.0.0.1",
+        "http://169.254.169.254/latest/meta-data",
+        "http://10.0.0.1",
+        "file:///etc/passwd",
+    ],
+)
+async def test_private_and_unsupported_urls_are_rejected_before_fetch(
+    unsafe_url: str,
+) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        raise AssertionError("Unsafe URL should not be requested")
+
+    with pytest.raises(WebsiteSafetyError):
+        await WebsiteEnrichmentProvider(transport=httpx.MockTransport(handler)).inspect(
+            business=business(website=unsafe_url),
+            website_url=unsafe_url,
         )

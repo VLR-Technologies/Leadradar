@@ -12,5 +12,11 @@ class RegionResponse(ApiModel):
 
 
 class CityResponse(ApiModel):
+    id: int | None = None
     name: str
     region: str | None
+    district: str | None = None
+    display_name: str
+    latitude: float | None = None
+    longitude: float | None = None
+    population: int = 0

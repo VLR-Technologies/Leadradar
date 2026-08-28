@@ -18,3 +18,13 @@ export function getCities(
   if (region) parameters.set("region", region);
   return apiRequest<CityOption[]>(`/api/v1/locations/cities?${parameters}`);
 }
+
+export function searchCities(
+  countryCode: string,
+  query: string,
+  region?: string | null,
+): Promise<CityOption[]> {
+  const parameters = new URLSearchParams({ countryCode, q: query, limit: "10" });
+  if (region) parameters.set("region", region);
+  return apiRequest<CityOption[]>(`/api/v1/locations/cities/search?${parameters}`);
+}

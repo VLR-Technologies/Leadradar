@@ -2,6 +2,14 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
+class BoundingBox:
+    xmin: float
+    ymin: float
+    xmax: float
+    ymax: float
+
+
+@dataclass(frozen=True, slots=True)
 class ResolvedLocation:
     country_code: str
     country: str
@@ -10,6 +18,7 @@ class ResolvedLocation:
     region_query_names: tuple[str, ...]
     city_query_names: tuple[str, ...]
     boundary_relation_ids: tuple[int, ...] = ()
+    bounding_box: BoundingBox | None = None
 
     @property
     def display_name(self) -> str:

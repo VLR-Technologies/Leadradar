@@ -5,7 +5,7 @@ export function businessLocation(business: Business): string {
     return business.address.formatted;
   }
 
-  return [business.address.city, business.address.country].filter(Boolean).join(", ") || "Not listed";
+  return [business.address.city, business.address.country].filter(Boolean).join(", ") || "Not found in current sources";
 }
 
 export function safeWebsiteUrl(value: string | null): string | null {

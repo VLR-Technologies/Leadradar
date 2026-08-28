@@ -1,6 +1,6 @@
 import pytest
 
-from app.core.locations import get_country, list_cities
+from app.core.locations import get_country, list_cities, search_cities
 from app.services.location_resolver import (
     CityRegionMismatchError,
     LocationResolver,
@@ -124,3 +124,22 @@ def test_catalogue_does_not_prevent_arbitrary_city_input() -> None:
     assert location.city == "Oxford"
     assert location.city_query_names == ("Oxford",)
     assert list_cities("GB")
+
+
+def test_india_city_search_uses_prefixes_aliases_and_state_context() -> None:
+    hyderabad = search_cities("IN", "hyd", limit=5)
+    bangalore = search_cities("IN", "Bangalore", limit=5)
+
+    assert hyderabad[0].name == "Hyderabad"
+    assert hyderabad[0].region == "Telangana"
+    assert bangalore[0].name == "Bengaluru"
+    assert bangalore[0].region == "Karnataka"
+
+
+def test_bundled_india_catalogue_has_broad_coverage_and_generated_envelopes() -> None:
+    cities = list_cities("IN")
+    warangal = next(city for city in cities if city.name == "Warangal")
+
+    assert len(cities) > 6_000
+    assert warangal.bounding_box is not None
+    assert warangal.generated_search_envelope is True

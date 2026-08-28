@@ -1,84 +1,152 @@
-# Lead Radar architecture
+# LeadRadar architecture
 
-Lead Radar Phase 1C keeps discovery, enrichment, transport, external providers, and UI concerns separate.
+LeadRadar 0.2 is a transient, India-first, multi-provider pipeline. Each layer depends on source-neutral models rather than an upstream provider's raw shape.
 
 ```text
 Next.js dashboard
-    ↓ typed HTTP client
-FastAPI route
-    ↓
-BusinessDiscoveryService
-    ↓
-LocationResolver → ResolvedLocation
-    ↓ provider protocol
-OverpassProvider
-    ↓
-normalize_osm_business
-    ↓
-Business domain model → Pydantic response schema
-
-Business selected by user
-    ↓
-BusinessEnrichmentService
-    ↓
-OfficialWebsiteEnrichmentProvider / BusinessSearchProvider
-    ↓
-provenance-aware deterministic merge
-    ↓
-updated frontend row + detail drawer
+    |
+    | typed JSON / XLSX
+    v
+FastAPI routes
+    |
+    +-- BusinessDiscoveryService
+    |      +-- LocationResolver
+    |      +-- OvertureMapsProvider -- DuckDB/httpfs --> public GeoParquet
+    |      +-- OverpassProvider ---------------------> public Overpass
+    |      +-- source normalizers
+    |      +-- cross-source deduplication/contact merge
+    |      +-- LeadOpportunityScorer
+    |
+    +-- SearchSessionStore
+    |      +-- bounded + expiring process memory
+    |      +-- server pagination, filters, summary, progress
+    |      +-- complete filtered export view
+    |
+    +-- BusinessEnrichmentService
+    |      +-- optional SearXNG candidate discovery
+    |      +-- WebsiteEnrichmentProvider
+    |      +-- verification, contact merge, audit, rescoring
+    |
+    +-- ExcelExportService --> in-memory .xlsx stream
 ```
 
-## Backend boundaries
+There is no persistence layer. A discovery result is cached in a bounded process-local session for a configurable absolute TTL (default 30 minutes), then expired. The store also evicts oldest sessions to enforce active-session and total-record bounds. API restart loses every session.
 
-- `api/routes` owns HTTP behavior and maps known application/provider failures to HTTP status codes.
-- `services` validates categories, resolves country/region/city input, coordinates provider calls, and performs source-ID deduplication.
-- `providers` owns external source communication. `BusinessProvider` is the seam for adding future permitted sources.
-- `normalizers` converts provider-specific records to source-neutral domain models.
-- `models` contains persistence-neutral domain objects.
-- `schemas` owns the public JSON contract and camelCase serialization.
-- `core` contains environment configuration and central catalogues.
+## Boundaries
 
-This structure allows a persistence repository to be introduced between the service and route in Phase 2 without moving Overpass parsing into database code.
+- `app/api/routes` owns HTTP validation, response schemas, safe error mapping, and streaming downloads.
+- `app/services` orchestrates providers, deduplicates, enriches, scores, and exports. It does not parse provider payloads.
+- `app/providers` owns external communication and provider-specific retry/timeout behavior.
+- `app/normalizers` maps Overture/OSM payloads and public contact strings into domain objects.
+- `app/models` is the source-neutral domain contract.
+- `app/schemas` is the camelCase public API contract.
+- `app/core` centralizes settings, the bundled India location index, website classification, and category mappings.
 
-## Contact enrichment strategy
+## Discovery providers and failure isolation
 
-Discovery never triggers enrichment automatically. A row-level `Enrich` action submits the already-normalized business to `/api/v1/businesses/enrich`. The service preserves all OpenStreetMap contacts as provenance records, optionally asks a configured permitted search provider for a candidate only when the website is missing, inspects the candidate, and applies deterministic merge rules. The backend also exposes a batch contract capped at 20 with a small concurrency semaphore, but the Phase 1C UI intentionally remains single-lead and user-triggered.
+`BusinessProvider` requires a name, display name, and async `discover` operation. The service invokes all configured providers concurrently and records provider status (`success`, `timeout`, `failed`, or `skipped`), duration, raw count, deduplicated accepted count, and safe message. Each provider receives one bounded oversampled target; there is no per-result request loop.
 
-`WebsiteEnrichmentProvider` fetches only static HTML with a clear `LeadRadar/0.1` user agent. It checks explicit robots rules, follows a small number of redirects, enforces a one-megabyte response cap, and inspects no more than the configured 1–5 pages. Contact/about/reach-us/enquiry links are discovered from paths and anchor text. Only the same registrable domain is followed. Private, loopback, link-local, non-HTTP, credential-bearing, and unusual-port URLs are rejected to limit server-side request forgery risk. Known social, search, directory, and booking platforms are displayed if OSM lists them but are not crawled.
+Overture is primary. `OVERTURE_RELEASE=latest` resolves the official STAC `latest` value once per process. DuckDB then reads only the Places GeoParquet files and projects only required fields. The SQL filters alternate mapped `categories.primary` values, `bbox.xmin`, `bbox.ymin`, operating status, and result limit; DuckDB/Parquet can push those predicates down rather than downloading the worldwide dataset. The `httpfs` extension is installed into a project-local ignored cache. Queries use reviewed city boxes where present and population-scaled generated search envelopes elsewhere.
 
-Website verification is conservative. A successful HTTP response alone is insufficient: the combined page text must match the business name, or combine a meaningful partial name match with city or existing-contact evidence. A mismatched candidate contributes no phone or email. Static `tel:` and `mailto:` values receive high confidence; visible contact-section values receive medium confidence. Search candidates remain low confidence until independently verified.
+OpenStreetMap remains complementary. Overpass uses a resolved country/region/city boundary, central category tags, configurable failover endpoints, bounded timeouts, one policy-aware 429 retry, and no per-business discovery requests. It does not run continuous or massive public extraction.
 
-The merge order is verified official website, then OpenStreetMap, then unverified search metadata. Conflicting values are retained in `alternatives` with their original source and confidence instead of being overwritten anonymously. Phone normalization handles Indian mobile country-code variants and preserves plausible STD-code landlines. Email normalization trims mailto parameters, lowercases domains, deduplicates, and rejects obvious placeholders.
+A failed/skipped provider contributes no rows but does not discard another provider's success. When every provider fails or is skipped, the API returns a typed 502 response. Non-fatal failures are returned as warnings alongside partial results.
 
-Final status is assigned only by `determine_enrichment_status` in the service layer. Providers report facts such as reachability, verification, extracted contacts, and errors; they do not decide the aggregate UX state. The classifier compares the normalized pre-enrichment record with verified provider results:
+## Normalization and provenance
 
-- `completed`: every phone/email field that was missing before enrichment was filled.
-- `partial`: a verified website or some additional contact information was obtained, but relevant missing contact fields remain.
-- `no_data`: execution completed normally with no useful addition, including the disabled-search/no-website case.
-- `failed`: execution was interrupted by a technical or provider error.
+The domain `Business` supports:
 
-Website verification and enrichment status remain independent. A verified website with no new phone or email is `websiteStatus=verified` and `status=partial`; an inspected but unverified/mismatched candidate with no usable addition is `status=no_data`. Pre-existing OSM fields never make a technical error look partial and are never removed by an empty or failed attempt. Machine-readable reason codes are separate from safe user-facing messages.
+- stable `lead_id`, provider `source_id`, all `sources`, and grouped `source_ids`
+- primary and alternative phones/emails/websites
+- normalized phones for comparison while retaining original public strings
+- structured Indian address components and coordinates
+- categories/subcategories, operating status, hours, confidence, and social links
+- official website type/status, separate directory links, and explicit WhatsApp values
+- nullable rating/review fields
+- per-field provenance records (`value`, `source`, `confidence`, source page URL, and extraction type)
+- enrichment state, website audit, scrape timestamp, score, level, and reasons
 
-`BusinessSearchProvider` is an interface only in this phase. The default disabled implementation returns no candidate, so missing-website enrichment produces a structured result rather than breaking discovery. No Google, Justdial, LinkedIn, or search-engine HTML scraping exists.
+Overture, OSM, official website, and search-provider values retain distinct provenance. A provider confidence value is not a customer rating. Ratings remain null because neither configured core provider supplies a legitimate review rating in this implementation.
 
-## International location strategy
+## Deduplication
 
-The backend catalogue is the source of truth for Germany (`DE`), the United Kingdom (`GB`), the United States (`US`), and India (`IN`). Country records define whether region context is required, while city records provide canonical names, optional state associations, aliases, and permitted OSM lookup names.
+Provider IDs alone cannot deduplicate across datasets. The deduplicator builds conservative evidence from:
 
-`LocationResolver` converts a validated request into a provider-neutral `ResolvedLocation`. It canonicalizes country codes, enforces a state for United States searches, rejects known city/state mismatches, resolves aliases, and preserves arbitrary city input for future coverage.
+- Unicode/case/punctuation-normalized business name
+- haversine coordinate distance
+- normalized phone overlap
+- website registrable-domain overlap
+- tokenized address/locality similarity
+- category and locality context
 
-The Overpass provider uses the resolved country ISO code to establish a country area. If region context is present, it resolves that administrative boundary first and scopes the city lookup inside it. The city boundary is then converted with `map_to_area` before business tags are queried. Administrative levels are intentionally not hardcoded because they differ across countries.
+To avoid an all-pairs comparison at 500+ results, it first blocks candidates by normalized name/address, phone, website domain, and adjacent coordinate buckets. The conservative match predicate then runs only inside candidate blocks.
 
-Known-good catalogue entries may carry a verified, stable OSM boundary relation ID; the four required integration cities currently do. This lets common searches move directly to the business query while country/state validation still happens in `LocationResolver`. Other catalogue and arbitrary cities use exact administrative-relation resolution. If the primary lookup returns no location marker, one broader fallback also considers closed boundary ways and place-tagged city/town/municipality objects within the same country or region scope. Once resolved, a separate bounded business query maps the trusted boundary IDs to an area and retrieves matching businesses. This avoids expensive combined Overpass query plans and never issues per-business requests. If resolution still cannot produce an area, the API returns a clear error rather than searching an arbitrary nearby location.
+Exact/near-exact names at very close coordinates can merge without contacts. Strong phone/domain evidence can support a fuzzy name match. Materially separated locations do not merge even when a chain shares a domain, preventing separate branches from collapsing. A merged lead prefers Overture as its base record, unions source IDs and contact arrays deterministically, and retains every field's provenance. The stable lead ID is a hash of the canonical merged identity.
 
-Resolved boundary IDs use a 128-entry in-process LRU cache, which reduces repeated metadata lookups without caching business results. A public-provider `429` response receives one policy-aware, bounded retry; other requests are not retried aggressively. Each user search remains request-based. No background crawl, result persistence, or indefinite business-result cache exists. Adding another country or alias does not require changing the API route, discovery service, provider protocol, or frontend types.
+## Enrichment and official-site verification
 
-## API location metadata
+The browser receives page 1 before automatic enrichment begins. A session enrichment endpoint selects at most 20 leads per call and uses a semaphore (default four). Priority is: phone plus no official site; phone plus official site but no email; then other leads missing useful channels. Terminal outcomes are not retried unless explicitly requested. Results update the same session used by pages and exports.
 
-The frontend obtains countries, regions, and suggested cities from `/api/v1/locations/*`. US country selection reveals a required state control, and its selected state filters the city suggestions. Other countries currently omit the irrelevant region field. The city control uses backend suggestions but remains free-text capable.
+Priority is existing Overture data, existing OSM data, known website, optional search candidate, then verified website contacts. `SearxngBusinessSearchProvider` queries only a configured self-hosted JSON endpoint and rejects known directory/social/search domains. A result is merely a low-confidence candidate. The website crawler must verify business name plus city or known-contact evidence before extracted contacts can win the merge.
 
-## Data semantics
+The static crawler inspects the homepage and bounded same-domain contact/about/reach/enquiry/support/location/branch links. It extracts explicit public `tel:`, `mailto:`, visible business contact strings, nested JSON-LD contact fields, explicitly numbered WhatsApp links, social profiles, directory links, and the contact page URL. Ordinary scripts remain ignored. Placeholder, asset, test, tracking, and no-reply email values are rejected; addresses are never synthesized.
 
-A null website means only that the current OpenStreetMap record does not list a website. The UI labels that state “Not listed,” never “No website.” Listed, verified, unreachable, and mismatch states are distinct. Phone and email availability likewise describe current source/enrichment data, not proof of absence.
+## Crawl security and responsible access
 
-Enrichment failures and `no_data` outcomes never remove discovery records or existing OSM contacts. All enrichment is transient, manually triggered, and held in browser state; no database, background job, automatic outreach, lead score, website audit, or continuous crawler exists.
+Every initial URL and redirect is revalidated. Only HTTP/HTTPS on ports 80/443 is allowed. Credentials, private/loopback/link-local/non-global IPs, `.local`, cross-domain redirects, and known directory/social/booking platforms are blocked. DNS is resolved before access to reduce SSRF risk. Requests have strict timeouts, redirect/page/response-size limits, HTML MIME checks, explicit cleanup, and a descriptive user agent.
+
+The provider reads robots rules and does not bypass access denial, authentication, CAPTCHA, rate limits, or anti-bot measures. Only public business contact information is in scope. HTML is parsed as text; scripts are not executed. Playwright is intentionally not installed or invoked by the core pipeline.
+
+## Website audit and scoring
+
+`WebsiteAudit` stores observations, not vague claims: reachability, HTTPS, redirect behavior, mobile viewport metadata, contact page, email/phone/social presence, title/meta description, and unsuccessful responses.
+
+`score_lead` converts contact availability and audit facts into an internal opportunity score. It rewards callable leads with missing/unreachable/weak digital presence, reduces the score when basic site signals are strong, and caps leads with no contact channel at 35. Thresholds are High ≥70, Medium 40–69, Low <40. Reasons are returned with every score. The score is not business quality, legitimacy, revenue, or customer sentiment.
+
+## API behavior
+
+Discovery:
+
+```text
+POST /api/v1/businesses/discover
+  -> page 1 + session ID + exact summary/totals + providers + warnings + expiry
+
+GET /api/v1/businesses/search-sessions/{id}?page=&pageSize=&filter=
+  -> one filtered page + exact filtered summary/totals
+```
+
+Enrichment:
+
+```text
+POST /api/v1/businesses/enrich
+POST /api/v1/businesses/enrich-batch  (maximum 20)
+POST /api/v1/businesses/search-sessions/{id}/enrich  (maximum 20)
+  -> verified fields + alternatives + provenance + audit + score
+```
+
+Export:
+
+```text
+POST /api/v1/businesses/export  (1–500 current leads)
+GET /api/v1/businesses/search-sessions/{id}/export?filter=
+  -> application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+```
+
+The workbook is created entirely in memory. Text beginning with spreadsheet formula characters is prefixed safely, NULs are removed, and only valid HTTP/HTTPS website values become hyperlinks.
+
+## Frontend state and workflow
+
+The Next.js dashboard is India-first and consumes backend location/category catalogues. City keystrokes query only the local API's bundled GeoNames index through an accessible debounced combobox. After discovery it displays provider raw/accepted counts, source-neutral missing-data language, exact server summary cards, one result page, and bounded enrichment progress. Filters, pagination, and Excel export are server-side. The detail drawer distinguishes official websites, directory/social presence, WhatsApp, contacts, location, audit, opportunity reasons, and source-page provenance.
+
+No database, local lead file, browser profile, cookie, or credential is persisted by the application. Search-session state exists only in bounded API-process memory until expiry/eviction/restart.
+
+## Known limits
+
+- Generated GeoNames search envelopes are approximate and can under- or over-include the administrative city area.
+- “All available” means up to the configured safety cap and available upstream coverage, not a complete census.
+- Overture and OSM coverage/contact completeness vary; missing means only absent from current sources.
+- Public Overpass and business websites can throttle, time out, change markup, or deny access.
+- Static HTML inspection does not cover JavaScript-only contact content.
+- SearXNG is optional and must be self-hosted/configured.
+- Ratings/reviews remain null without a legitimate source.
+- Playwright fallback, permanent storage, scheduled crawling, outreach, and paid/restricted data integrations are intentionally not implemented.
