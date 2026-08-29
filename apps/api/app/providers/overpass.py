@@ -151,16 +151,25 @@ out center {limit};"""
 
 
 class OverpassProvider:
+    name = "openstreetmap"
+    display_name = "OpenStreetMap"
+
     def __init__(
         self,
         *,
         base_url: str = "https://lz4.overpass-api.de/api/interpreter",
+        endpoints: Sequence[str] | None = None,
         timeout_seconds: float = 35.0,
         client: httpx.AsyncClient | None = None,
         rate_limit_retry_seconds: float = 30.0,
     ) -> None:
-        self._base_url = base_url
+        self._base_urls = tuple(
+            value.rstrip("/") for value in (endpoints or (base_url,)) if value.strip()
+        )
+        if not self._base_urls:
+            raise ValueError("At least one Overpass endpoint is required.")
         self._timeout = httpx.Timeout(timeout_seconds)
+        self.overall_timeout_seconds = min(120.0, timeout_seconds * 2 + 5)
         self._client = client
         self._rate_limit_retry_seconds = rate_limit_retry_seconds
         self._boundary_cache: OrderedDict[
@@ -175,20 +184,32 @@ class OverpassProvider:
         query: str,
     ) -> list[dict[str, Any]]:
         response: httpx.Response | None = None
-        for attempt in range(2):
+        attempts = max(2, len(self._base_urls))
+        for attempt in range(attempts):
+            endpoint = self._base_urls[attempt % len(self._base_urls)]
             try:
                 response = await client.post(
-                    self._base_url,
+                    endpoint,
                     data={"data": query},
                     headers={"User-Agent": "LeadRadar/0.1 (internal business discovery)"},
                 )
             except httpx.TimeoutException as exc:
+                if attempt + 1 < attempts:
+                    continue
                 raise ProviderTimeoutError("Overpass request timed out") from exc
             except httpx.HTTPError as exc:
+                if attempt + 1 < attempts:
+                    continue
                 raise ProviderUnavailableError("Overpass request failed") from exc
 
-            if response.status_code == 429 and attempt == 0:
-                await asyncio.sleep(self._rate_limit_retry_seconds)
+            if response.status_code == 429 and attempt + 1 < attempts:
+                retry_after = response.headers.get("retry-after", "")
+                delay = (
+                    min(float(retry_after), self._rate_limit_retry_seconds)
+                    if retry_after.replace(".", "", 1).isdigit()
+                    else self._rate_limit_retry_seconds
+                )
+                await asyncio.sleep(delay)
                 continue
 
             try:
@@ -196,6 +217,8 @@ class OverpassProvider:
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code in {408, 504}:
                     raise ProviderTimeoutError("Overpass request timed out") from exc
+                if exc.response.status_code >= 500 and attempt + 1 < attempts:
+                    continue
                 raise ProviderUnavailableError("Overpass request failed") from exc
             break
 

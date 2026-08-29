@@ -9,6 +9,12 @@ export interface RegionOption {
 }
 
 export interface CityOption {
+  id: number | null;
   name: string;
   region: string | null;
+  district: string | null;
+  displayName: string;
+  latitude: number | null;
+  longitude: number | null;
+  population: number;
 }

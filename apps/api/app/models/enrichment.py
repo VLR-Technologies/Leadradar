@@ -1,9 +1,13 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
+from app.models.business import (
+    Confidence,
+    FieldProvenance,
+    OpportunityLevel,
+    WebsiteAudit,
+)
 
-ProvenanceSource = Literal["openstreetmap", "official_website", "search_provider"]
-Confidence = Literal["high", "medium", "low"]
 EnrichmentStatus = Literal[
     "not_started",
     "in_progress",
@@ -38,13 +42,6 @@ WebsiteVerificationStatus = Literal[
 
 
 @dataclass(frozen=True, slots=True)
-class FieldProvenance:
-    value: str
-    source: ProvenanceSource
-    confidence: Confidence
-
-
-@dataclass(frozen=True, slots=True)
 class EnrichedField:
     primary: FieldProvenance | None = None
     alternatives: tuple[FieldProvenance, ...] = field(default_factory=tuple)
@@ -55,6 +52,7 @@ class EnrichmentFields:
     phone: EnrichedField = field(default_factory=EnrichedField)
     email: EnrichedField = field(default_factory=EnrichedField)
     website: EnrichedField = field(default_factory=EnrichedField)
+    whatsapp: EnrichedField = field(default_factory=EnrichedField)
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +60,7 @@ class ExtractedContact:
     value: str
     confidence: Confidence
     page_url: str
+    source_type: str = "visible_text"
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +69,11 @@ class WebsiteInspection:
     final_url: str | None = None
     phones: tuple[ExtractedContact, ...] = field(default_factory=tuple)
     emails: tuple[ExtractedContact, ...] = field(default_factory=tuple)
+    whatsapp_numbers: tuple[ExtractedContact, ...] = field(default_factory=tuple)
+    social_links: tuple[str, ...] = field(default_factory=tuple)
+    directory_links: tuple[str, ...] = field(default_factory=tuple)
+    contact_page_url: str | None = None
+    website_audit: WebsiteAudit | None = None
     visited_pages: tuple[str, ...] = field(default_factory=tuple)
     message: str | None = None
 
@@ -90,3 +94,11 @@ class EnrichmentResult:
     reason_code: EnrichmentReasonCode | None = None
     message: str | None = None
     visited_pages: tuple[str, ...] = field(default_factory=tuple)
+    social_links: tuple[str, ...] = field(default_factory=tuple)
+    directory_links: tuple[str, ...] = field(default_factory=tuple)
+    whatsapp_numbers: tuple[str, ...] = field(default_factory=tuple)
+    contact_page_url: str | None = None
+    website_audit: WebsiteAudit | None = None
+    lead_score: int = 0
+    opportunity_level: OpportunityLevel = "Low"
+    opportunity_reasons: tuple[str, ...] = field(default_factory=tuple)

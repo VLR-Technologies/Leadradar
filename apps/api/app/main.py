@@ -17,6 +17,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Accept"],
+    expose_headers=["Content-Disposition"],
 )
 app.include_router(api_router)
 

@@ -1,14 +1,15 @@
 {
   "name": "lead-radar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "workspaces": [
     "apps/web"
   ],
   "scripts": {
     "dev:web": "npm run dev --workspace @lead-radar/web",
-    "dev:api": "cd apps/api && python3 -m uvicorn app.main:app --reload",
+    "dev:api": "cd apps/api && python -m uvicorn app.main:app --reload",
     "lint": "npm run lint --workspace @lead-radar/web",
+    "typecheck": "npm run typecheck --workspace @lead-radar/web",
     "build": "npm run build --workspace @lead-radar/web"
   },
   "engines": {

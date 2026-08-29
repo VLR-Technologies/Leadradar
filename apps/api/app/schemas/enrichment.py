@@ -3,7 +3,11 @@ from typing import Annotated, Literal
 from pydantic import Field
 
 from app.schemas.base import ApiModel
-from app.schemas.business import BusinessResponse
+from app.schemas.business import (
+    BusinessResponse,
+    FieldProvenanceResponse,
+    WebsiteAuditResponse,
+)
 
 
 class EnrichBusinessRequest(ApiModel):
@@ -12,12 +16,6 @@ class EnrichBusinessRequest(ApiModel):
 
 class EnrichBusinessesBatchRequest(ApiModel):
     businesses: Annotated[list[BusinessResponse], Field(min_length=1, max_length=20)]
-
-
-class FieldProvenanceResponse(ApiModel):
-    value: str
-    source: Literal["openstreetmap", "official_website", "search_provider"]
-    confidence: Literal["high", "medium", "low"]
 
 
 class EnrichedFieldResponse(ApiModel):
@@ -29,6 +27,7 @@ class EnrichmentFieldsResponse(ApiModel):
     phone: EnrichedFieldResponse
     email: EnrichedFieldResponse
     website: EnrichedFieldResponse
+    whatsapp: EnrichedFieldResponse = Field(default_factory=EnrichedFieldResponse)
 
 
 class EnrichBusinessResponse(ApiModel):
@@ -67,6 +66,14 @@ class EnrichBusinessResponse(ApiModel):
     ] | None = None
     message: str | None = None
     visited_pages: list[str] = Field(default_factory=list)
+    social_links: list[str] = Field(default_factory=list)
+    directory_links: list[str] = Field(default_factory=list)
+    whatsapp_numbers: list[str] = Field(default_factory=list)
+    contact_page_url: str | None = None
+    website_audit: WebsiteAuditResponse | None = None
+    lead_score: int = Field(default=0, ge=0, le=100)
+    opportunity_level: Literal["High", "Medium", "Low"] = "Low"
+    opportunity_reasons: list[str] = Field(default_factory=list)
 
 
 class EnrichBusinessesBatchResponse(ApiModel):

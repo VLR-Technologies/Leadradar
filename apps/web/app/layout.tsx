@@ -4,8 +4,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Lead Radar · Business Discovery & Enrichment",
-  description: "Request-based business discovery and official website contact enrichment for VLR Technologies.",
+  title: "Lead Radar · India Lead Discovery",
+  description: "Multi-source public business lead discovery and digital-opportunity analysis for VLR Technologies.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

@@ -50,4 +50,7 @@ class BusinessSearchProvider(Protocol):
         city: str | None,
         region: str | None,
         country: str | None,
+        locality: str | None = None,
+        category: str | None = None,
+        phone: str | None = None,
     ) -> SearchCandidate | None: ...
