@@ -1,13 +1,16 @@
 import asyncio
+import logging
+from dataclasses import replace
+from time import perf_counter
 from typing import Literal
 
-from app.models.business import Business
+from app.core.websites import classify_website_url
+from app.models.business import Business, FieldProvenance, WebsiteAudit
 from app.models.enrichment import (
     EnrichedField,
     EnrichmentFields,
     EnrichmentReasonCode,
     EnrichmentResult,
-    FieldProvenance,
     SearchCandidate,
     WebsiteVerificationStatus,
 )
@@ -23,7 +26,9 @@ from app.providers.enrichment.base import (
     WebsiteTimeoutError,
     WebsiteUnavailableError,
 )
+from app.services.lead_scoring import score_lead
 
+logger = logging.getLogger(__name__)
 
 TerminalEnrichmentStatus = Literal["completed", "partial", "no_data", "failed"]
 
@@ -74,8 +79,95 @@ class BusinessEnrichmentService:
         self.max_concurrency = max_concurrency
 
     async def enrich(self, business: Business) -> EnrichmentResult:
+        started = perf_counter()
+        logger.info(
+            "enrichment.start",
+            extra={"source_id": business.source_id, "has_website": bool(business.website)},
+        )
+        result = await self._enrich(business)
+        phone_values = _field_values(result.fields.phone)
+        email_values = _field_values(result.fields.email)
+        website_values = _field_values(result.fields.website)
+        whatsapp_values = _field_values(result.fields.whatsapp)
+        website_status = {
+            "verified": "verified",
+            "unreachable": "unreachable",
+            "mismatch": "mismatch",
+            "source_listed": "listed",
+        }.get(
+            result.website_status,
+            "listed" if website_values else "not_found",
+        )
+        scored_business = replace(
+            business,
+            phone=phone_values[0] if phone_values else business.phone,
+            phones=phone_values or business.phones,
+            normalized_phones=tuple(
+                value
+                for phone in (phone_values or business.phones)
+                if (value := normalize_phone(phone))
+            ),
+            email=email_values[0] if email_values else business.email,
+            emails=email_values or business.emails,
+            website=website_values[0] if website_values else business.website,
+            websites=website_values or business.websites,
+            website_status=website_status,
+            website_type=(
+                "official" if result.website_status == "verified" else business.website_type
+            ),
+            directory_links=tuple(
+                dict.fromkeys((*business.directory_links, *result.directory_links))
+            ),
+            social_links=tuple(dict.fromkeys((*business.social_links, *result.social_links))),
+            whatsapp_number=(
+                whatsapp_values[0] if whatsapp_values else business.whatsapp_number
+            ),
+            whatsapp_numbers=whatsapp_values or business.whatsapp_numbers,
+            website_audit=result.website_audit,
+            enrichment_status=result.status,
+        )
+        opportunity = score_lead(scored_business)
+        enriched_result = replace(
+            result,
+            lead_score=opportunity.score,
+            opportunity_level=opportunity.level,
+            opportunity_reasons=opportunity.reasons,
+        )
+        logger.info(
+            "enrichment.finish",
+            extra={
+                "source_id": business.source_id,
+                "status": result.status,
+                "reason_code": result.reason_code,
+                "duration_ms": round((perf_counter() - started) * 1000),
+            },
+        )
+        return enriched_result
+
+    async def _enrich(self, business: Business) -> EnrichmentResult:
         baseline = _baseline_fields(business)
-        website_url = business.website
+        listed_website_type = classify_website_url(business.website)
+        website_url = (
+            business.website
+            if listed_website_type not in {"directory", "social"}
+            else None
+        )
+        directory_links = tuple(
+            dict.fromkeys(
+                (
+                    *business.directory_links,
+                    *((business.website,) if listed_website_type == "directory" else ()),
+                )
+            )
+        )
+        social_links = tuple(
+            dict.fromkeys(
+                (
+                    *business.social_links,
+                    *((business.website,) if listed_website_type == "social" else ()),
+                )
+            )
+        )
         candidate: SearchCandidate | None = None
 
         if not website_url:
@@ -85,8 +177,11 @@ class BusinessEnrichmentService:
                     city=business.address.city,
                     region=business.address.state,
                     country=business.address.country,
+                    locality=business.address.locality,
+                    category=business.category,
+                    phone=business.phone,
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 - provider boundary returns a safe domain result
                 return _failed_result(
                     business=business,
                     fields=baseline,
@@ -121,6 +216,8 @@ class BusinessEnrichmentService:
                 fields=baseline,
                 reason_code=reason_code,
                 message=message,
+                directory_links=directory_links,
+                social_links=social_links,
             )
 
         try:
@@ -176,7 +273,7 @@ class BusinessEnrichmentService:
                 reason_code="WEBSITE_UNREACHABLE",
                 message="The business website could not be reached.",
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary prevents leaking internals
             return _failed_result(
                 business=business,
                 fields=baseline,
@@ -211,32 +308,76 @@ class BusinessEnrichmentService:
                 reason_code=reason_code,
                 message=message,
                 visited_pages=inspection.visited_pages,
+                directory_links=tuple(
+                    dict.fromkeys((*directory_links, *inspection.directory_links))
+                ),
+                social_links=tuple(
+                    dict.fromkeys((*social_links, *inspection.social_links))
+                ),
+                whatsapp_numbers=tuple(
+                    contact.value for contact in inspection.whatsapp_numbers
+                ),
+                website_audit=inspection.website_audit,
             )
 
         enriched_phone_values = tuple(
-            FieldProvenance(contact.value, "official_website", contact.confidence)
+            FieldProvenance(
+                contact.value,
+                "official_website",
+                contact.confidence,
+                source_url=contact.page_url,
+                source_type=contact.source_type,
+            )
             for contact in inspection.phones
         )
         enriched_email_values = tuple(
-            FieldProvenance(contact.value, "official_website", contact.confidence)
+            FieldProvenance(
+                contact.value,
+                "official_website",
+                contact.confidence,
+                source_url=contact.page_url,
+                source_type=contact.source_type,
+            )
             for contact in inspection.emails
+        )
+        enriched_whatsapp_values = tuple(
+            FieldProvenance(
+                contact.value,
+                "official_website",
+                contact.confidence,
+                source_url=contact.page_url,
+                source_type=contact.source_type,
+            )
+            for contact in inspection.whatsapp_numbers
         )
         official_website = FieldProvenance(
             normalize_website_url(inspection.final_url) or inspection.final_url,
             "official_website",
             "high",
+            source_url=inspection.final_url,
+            source_type="verified_official",
         )
         website_alternatives: tuple[FieldProvenance, ...] = ()
         if candidate:
             normalized_candidate = normalize_website_url(candidate.url)
             if normalized_candidate:
                 website_alternatives = (
-                    FieldProvenance(normalized_candidate, "search_provider", "low"),
+                    FieldProvenance(
+                        normalized_candidate,
+                        "search_provider",
+                        "low",
+                        source_url=normalized_candidate,
+                        source_type="search_candidate",
+                    ),
                 )
 
         phone_added = _contains_additional_value(enriched_phone_values, baseline.phone)
         email_added = _contains_additional_value(enriched_email_values, baseline.email)
         website_changed = _contains_additional_value((official_website,), baseline.website)
+        whatsapp_added = _contains_additional_value(
+            enriched_whatsapp_values,
+            baseline.whatsapp,
+        )
         status = determine_enrichment_status(
             execution_succeeded=True,
             website_verified=True,
@@ -244,11 +385,11 @@ class BusinessEnrichmentService:
             email_added=email_added,
             phone_was_missing=baseline.phone.primary is None,
             email_was_missing=baseline.email.primary is None,
-            other_fields_added=website_changed,
+            other_fields_added=website_changed or whatsapp_added,
         )
         reason_code, message = _success_reason(
             status=status,
-            contact_added=phone_added or email_added,
+            contact_added=phone_added or email_added or whatsapp_added,
         )
         fields = EnrichmentFields(
             phone=_merge_field(enriched_phone_values, baseline.phone),
@@ -257,6 +398,7 @@ class BusinessEnrichmentService:
                 (official_website, *website_alternatives),
                 baseline.website,
             ),
+            whatsapp=_merge_field(enriched_whatsapp_values, baseline.whatsapp),
         )
         return EnrichmentResult(
             source_id=business.source_id,
@@ -266,6 +408,15 @@ class BusinessEnrichmentService:
             reason_code=reason_code,
             message=message,
             visited_pages=inspection.visited_pages,
+            social_links=tuple(dict.fromkeys((*social_links, *inspection.social_links))),
+            directory_links=tuple(
+                dict.fromkeys((*directory_links, *inspection.directory_links))
+            ),
+            whatsapp_numbers=tuple(
+                dict.fromkeys(contact.value for contact in inspection.whatsapp_numbers)
+            ),
+            contact_page_url=inspection.contact_page_url,
+            website_audit=inspection.website_audit,
         )
 
     async def enrich_batch(self, businesses: list[Business]) -> list[EnrichmentResult]:
@@ -290,6 +441,11 @@ def _failed_result(
     reason_code: EnrichmentReasonCode,
     message: str,
 ) -> EnrichmentResult:
+    audit = (
+        WebsiteAudit(reachable=False, label="Website unreachable")
+        if website_status == "unreachable"
+        else None
+    )
     return EnrichmentResult(
         source_id=business.source_id,
         status=determine_enrichment_status(
@@ -304,6 +460,7 @@ def _failed_result(
         fields=fields,
         reason_code=reason_code,
         message=message,
+        website_audit=audit,
     )
 
 
@@ -323,19 +480,80 @@ def _success_reason(
 
 
 def _baseline_fields(business: Business) -> EnrichmentFields:
-    phone = normalize_phone(business.phone or "")
-    email = normalize_email(business.email or "")
-    website = normalize_website_url(business.website or "")
+    phone = _provenance_field(
+        business,
+        "phone",
+        normalizer=normalize_phone,
+        fallback=business.phone,
+    )
+    email = _provenance_field(
+        business,
+        "email",
+        normalizer=normalize_email,
+        fallback=business.email,
+    )
+    website = _provenance_field(
+        business,
+        "website",
+        normalizer=_normalize_official_website,
+        fallback=(
+            business.website
+            if classify_website_url(business.website) not in {"directory", "social"}
+            else None
+        ),
+    )
+    whatsapp = _provenance_field(
+        business,
+        "whatsapp",
+        normalizer=normalize_phone,
+        fallback=business.whatsapp_number,
+    )
     return EnrichmentFields(
-        phone=EnrichedField(
-            primary=FieldProvenance(phone, "openstreetmap", "medium") if phone else None,
-        ),
-        email=EnrichedField(
-            primary=FieldProvenance(email, "openstreetmap", "medium") if email else None,
-        ),
-        website=EnrichedField(
-            primary=FieldProvenance(website, "openstreetmap", "medium") if website else None,
-        ),
+        phone=phone,
+        email=email,
+        website=website,
+        whatsapp=whatsapp,
+    )
+
+
+def _normalize_official_website(value: str) -> str | None:
+    if classify_website_url(value) in {"directory", "social"}:
+        return None
+    return normalize_website_url(value)
+
+
+def _provenance_field(
+    business: Business,
+    field_name: str,
+    *,
+    normalizer,
+    fallback: str | None,
+) -> EnrichedField:
+    values: list[FieldProvenance] = []
+    seen: set[tuple[str, str]] = set()
+    candidates = business.field_provenance.get(field_name, ())
+    if not candidates and fallback:
+        candidates = (FieldProvenance(fallback, business.source, "medium"),)
+    for item in candidates:
+        normalized = normalizer(item.value)
+        if not normalized:
+            continue
+        key = (normalized.casefold(), item.source)
+        if key in seen:
+            continue
+        seen.add(key)
+        values.append(replace(item, value=normalized))
+    return EnrichedField(
+        primary=values[0] if values else None,
+        alternatives=tuple(values[1:]),
+    )
+
+
+def _field_values(field: EnrichedField) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            item.value for item in (field.primary, *field.alternatives) if item is not None
+        )
     )
 
 

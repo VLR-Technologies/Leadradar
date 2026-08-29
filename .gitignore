@@ -1,5 +1,7 @@
 .DS_Store
 .env
+.env.*
+!.env.example
 .env.local
 !.env.example
 node_modules/
@@ -13,5 +15,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+.venv-codex/
+.duckdb/
 htmlcov/
 

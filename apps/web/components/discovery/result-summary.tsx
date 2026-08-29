@@ -1,39 +1,49 @@
-import { Building2, Globe2, GlobeLock, Phone } from "lucide-react";
+import { Building2, Globe2, GlobeLock, Mail, Phone, TrendingUp } from "lucide-react";
 
-import type { Business, DiscoveryQuery } from "@/types/business";
+import type { DiscoveryQuery, SearchSummary } from "@/types/business";
 
 interface ResultSummaryProps {
-  businesses: Business[];
+  summary: SearchSummary;
   query: DiscoveryQuery;
 }
 
-export function ResultSummary({ businesses, query }: ResultSummaryProps) {
-  const websiteListed = businesses.filter((business) => business.website).length;
-  const phoneAvailable = businesses.filter((business) => business.phone).length;
+export function ResultSummary({ summary, query }: ResultSummaryProps) {
   const metrics = [
     {
       label: "Total businesses",
-      value: businesses.length,
+      value: summary.total,
       icon: Building2,
       iconClass: "bg-[#eaf4ff] text-[#2563a6]",
     },
     {
-      label: "Website listed",
-      value: websiteListed,
+      label: "Official website",
+      value: summary.withOfficialWebsite,
       icon: Globe2,
       iconClass: "bg-[#eaf8f1] text-[#177454]",
     },
     {
-      label: "Website not listed",
-      value: businesses.length - websiteListed,
+      label: "No official website",
+      value: summary.withoutOfficialWebsite,
       icon: GlobeLock,
       iconClass: "bg-[#fff5e7] text-[#ae681b]",
     },
     {
       label: "Phone available",
-      value: phoneAvailable,
+      value: summary.withPhone,
       icon: Phone,
       iconClass: "bg-[#f0edff] text-[#694eb7]",
+    },
+    {
+      label: "Email available",
+      value: summary.withEmail,
+      icon: Mail,
+      iconClass: "bg-[#edf7ff] text-[#316f9f]",
+    },
+    {
+      label: "High opportunity",
+      value: summary.highOpportunity,
+      icon: TrendingUp,
+      iconClass: "bg-[#fff0e8] text-[#a64d20]",
     },
   ] as const;
   const locationLabel = [query.city, query.region, query.country].filter(Boolean).join(", ");
@@ -46,13 +56,13 @@ export function ResultSummary({ businesses, query }: ResultSummaryProps) {
             {locationLabel} · {query.category}
           </p>
           <h2 id="result-heading" className="mt-1 text-xl font-semibold tracking-[-0.025em] text-[#17211d]">
-            {businesses.length.toLocaleString()} businesses discovered
+            {summary.total.toLocaleString()} businesses in this view
           </h2>
         </div>
-        <p className="text-xs text-[#738078]">Website status reflects the current source record.</p>
+        <p className="text-xs text-[#738078]">Opportunity is an internal sales heuristic, not a business-quality rating.</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
         {metrics.map((metric) => {
           const Icon = metric.icon;
           return (

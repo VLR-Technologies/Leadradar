@@ -1,7 +1,6 @@
 import re
 from urllib.parse import urlsplit, urlunsplit
 
-
 _EMAIL_PATTERN = re.compile(
     r"^[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?"
     r"(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$",
@@ -15,6 +14,24 @@ _PLACEHOLDER_EMAILS = {
 }
 _PLACEHOLDER_DOMAINS = {"example.com", "example.org", "example.net", "example.test"}
 _ASSET_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".css", ".js")
+_NON_CONTACT_LOCAL_PARTS = {
+    "donotreply",
+    "do-not-reply",
+    "no-reply",
+    "noreply",
+    "null",
+    "pixel",
+    "test",
+    "tracking",
+}
+
+
+def split_public_values(value: str | None) -> tuple[str, ...]:
+    """Split provider list fields without inventing or reformatting their public values."""
+    if not value:
+        return ()
+    values = [item.strip() for item in re.split(r"\s*[;,]\s*", value) if item.strip()]
+    return tuple(dict.fromkeys(values))
 
 
 def normalize_phone(value: str) -> str | None:
@@ -57,6 +74,8 @@ def normalize_email(value: str) -> str | None:
     if not _EMAIL_PATTERN.fullmatch(normalized):
         return None
     if normalized.lower() in _PLACEHOLDER_EMAILS or domain.lower() in _PLACEHOLDER_DOMAINS:
+        return None
+    if local_part.casefold() in _NON_CONTACT_LOCAL_PARTS:
         return None
     if local_part.lower().endswith(_ASSET_SUFFIXES):
         return None

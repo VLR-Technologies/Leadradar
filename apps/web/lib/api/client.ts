@@ -58,3 +58,32 @@ export async function apiRequest<T>(
   return body as T;
 }
 
+export async function apiBlobRequest(
+  path: string,
+  init?: RequestInit,
+): Promise<{ blob: Blob; filename: string | null }> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      ...init,
+      headers: {
+        Accept: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Type": "application/json",
+        ...init?.headers,
+      },
+    });
+  } catch {
+    throw new ApiError("Lead Radar could not reach the export service.", 0);
+  }
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => null);
+    throw new ApiError(
+      readErrorMessage(body) ?? "The Excel export could not be generated.",
+      response.status,
+    );
+  }
+  const disposition = response.headers.get("content-disposition");
+  const filename = disposition?.match(/filename="?([^";]+)"?/i)?.[1] ?? null;
+  return { blob: await response.blob(), filename };
+}
+

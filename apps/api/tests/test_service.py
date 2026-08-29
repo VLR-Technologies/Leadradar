@@ -36,7 +36,7 @@ class StubProvider:
         ]
 
 
-async def test_service_deduplicates_only_exact_source_ids() -> None:
+async def test_service_deduplicates_matching_source_records() -> None:
     service = BusinessDiscoveryService(
         provider=StubProvider(),
         location_resolver=LocationResolver(),
@@ -50,9 +50,10 @@ async def test_service_deduplicates_only_exact_source_ids() -> None:
         limit=100,
     )
 
-    assert [business.source_id for business in result.businesses] == ["node:1", "way:2"]
-    assert [business.name for business in result.businesses] == [
-        "Alpha Dental",
-        "Alpha Dental",
-    ]
+    assert [business.source_id for business in result.businesses] == ["node:1"]
+    assert result.businesses[0].source_ids == {
+        "openstreetmap": ("node:1", "way:2")
+    }
+    assert result.businesses[0].lead_id is not None
     assert result.location.country_code == "DE"
+    assert result.providers[0].status == "success"

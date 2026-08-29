@@ -2,10 +2,34 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.core.locations import get_country, list_cities, list_countries, list_regions
+from app.core.locations import (
+    CityDefinition,
+    get_country,
+    list_cities,
+    list_countries,
+    list_regions,
+    search_cities,
+)
 from app.schemas.location import CityResponse, CountryResponse, RegionResponse
 
 router = APIRouter(prefix="/locations", tags=["locations"])
+
+
+def _city_response(city: CityDefinition) -> CityResponse:
+    return CityResponse(
+        id=city.geoname_id,
+        name=city.name,
+        region=city.region,
+        district=city.district,
+        display_name=", ".join(
+            dict.fromkeys(
+                value for value in (city.name, city.district, city.region) if value
+            )
+        ),
+        latitude=city.latitude,
+        longitude=city.longitude,
+        population=city.population,
+    )
 
 
 def _country_or_error(country_code: str):
@@ -60,7 +84,29 @@ async def get_cities(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Unsupported region for {country.name}: {region}",
             )
+    cities = list_cities(country_code, region)
+    if country.code == "IN" and not region:
+        cities = cities[:50]
+    return [_city_response(city) for city in cities]
+
+
+@router.get("/cities/search", response_model=list[CityResponse])
+async def find_cities(
+    country_code: Annotated[
+        str,
+        Query(alias="countryCode", min_length=2, max_length=2),
+    ],
+    query: Annotated[str, Query(alias="q", min_length=2, max_length=80)],
+    region: Annotated[str | None, Query(max_length=120)] = None,
+    limit: Annotated[int, Query(ge=1, le=20)] = 10,
+) -> list[CityResponse]:
+    _country_or_error(country_code)
     return [
-        CityResponse(name=city.name, region=city.region)
-        for city in list_cities(country_code, region)
+        _city_response(city)
+        for city in search_cities(
+            country_code,
+            query,
+            region=region,
+            limit=limit,
+        )
     ]

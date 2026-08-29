@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 
 import { businessLocation, displayWebsite, safeWebsiteUrl } from "@/lib/format";
-import type { Business, EnrichedField } from "@/types/business";
+import type { Business } from "@/types/business";
 
 interface BusinessTableProps {
   businesses: Business[];
@@ -22,15 +22,20 @@ interface BusinessTableProps {
 
 function WebsiteCell({ business }: { business: Business }) {
   const href = safeWebsiteUrl(business.website);
-  const verification = business.enrichment?.websiteStatus;
+  const verification = business.websiteStatus;
+  const presenceOnly = !business.website && Boolean(
+    business.directoryLinks.length || business.socialLinks.length,
+  );
   const label =
     verification === "verified"
       ? "Verified"
       : verification === "unreachable"
         ? "Unreachable"
         : business.website
-          ? "Listed"
-          : "Not listed";
+          ? "Official listed"
+          : presenceOnly
+            ? "Directory/social only"
+            : "Not found";
   const badgeClass =
     verification === "verified"
       ? "bg-[#e7f8ef] text-[#126b47]"
@@ -38,6 +43,8 @@ function WebsiteCell({ business }: { business: Business }) {
         ? "bg-[#fff1ed] text-[#9a493c]"
         : business.website
           ? "bg-[#edf6f1] text-[#326a53]"
+          : presenceOnly
+            ? "bg-[#fff8df] text-[#896a12]"
           : "bg-[#f2f4f3] text-[#6f7b75]";
 
   return (
@@ -64,7 +71,7 @@ function WebsiteCell({ business }: { business: Business }) {
 
 function ContactCell({ kind, value }: { kind: "phone" | "email"; value: string | null }) {
   if (!value) {
-    return <span className="text-xs text-[#7c8881]">Not listed</span>;
+    return <span className="text-xs text-[#7c8881]">Not found</span>;
   }
   return (
     <a
@@ -78,19 +85,38 @@ function ContactCell({ kind, value }: { kind: "phone" | "email"; value: string |
   );
 }
 
-function hasOfficialWebsiteSource(field: EnrichedField | undefined): boolean {
-  return Boolean(
-    field?.primary?.source === "official_website" ||
-      field?.alternatives.some((item) => item.source === "official_website"),
+function sourceLabel(business: Business): string {
+  const values: string[] = business.sources.map((source) =>
+    source === "overture" ? "Overture" : "OSM",
   );
+  const hasWebsiteProvenance = Object.values(business.fieldProvenance).some((items) =>
+    items.some((item) => item.source === "official_website"),
+  );
+  if (hasWebsiteProvenance) {
+    values.push("Website");
+  }
+  return [...new Set(values)].join(" + ") || "Current sources";
 }
 
-function sourceLabel(business: Business): string {
-  const fields = business.enrichment?.fields;
-  return fields &&
-    [fields.phone, fields.email, fields.website].some(hasOfficialWebsiteSource)
-    ? "OSM + Website"
-    : "OpenStreetMap";
+function businessKey(business: Business): string {
+  return business.leadId ?? business.sourceId;
+}
+
+function OpportunityCell({ business }: { business: Business }) {
+  const className =
+    business.opportunityLevel === "High"
+      ? "bg-[#fff0e8] text-[#a64d20]"
+      : business.opportunityLevel === "Medium"
+        ? "bg-[#fff8df] text-[#896a12]"
+        : "bg-[#edf7f2] text-[#176846]";
+  return (
+    <div className="space-y-1">
+      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${className}`}>
+        {business.opportunityLevel}
+      </span>
+      <p className="text-xs font-semibold text-[#536159]">Score {business.leadScore}</p>
+    </div>
+  );
 }
 
 function EnrichAction({
@@ -104,7 +130,7 @@ function EnrichAction({
   error?: string;
   onEnrich: (business: Business) => void;
 }) {
-  const status = business.enrichment?.status;
+  const status = business.enrichmentStatus;
   const completed = status === "completed";
   const settled = completed || status === "partial" || status === "no_data";
   let label = "Enrich";
@@ -144,7 +170,6 @@ function EnrichAction({
         className={`inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition disabled:cursor-default disabled:opacity-80 ${buttonClass}`}
         title={
           error ??
-          business.enrichment?.message ??
           "Find additional public contact details"
         }
       >
@@ -182,7 +207,7 @@ export function BusinessTable({
 
       <div className="divide-y divide-[#e8edea] md:hidden">
         {businesses.map((business) => (
-          <article key={business.sourceId} className="p-4">
+          <article key={businessKey(business)} className="p-4">
             <button
               type="button"
               onClick={() => onSelect(business)}
@@ -204,11 +229,12 @@ export function BusinessTable({
               <div><p className="mb-1 text-[10px] font-bold tracking-wide text-[#839087] uppercase">Phone</p><ContactCell kind="phone" value={business.phone} /></div>
               <div><p className="mb-1 text-[10px] font-bold tracking-wide text-[#839087] uppercase">Email</p><ContactCell kind="email" value={business.email} /></div>
               <div><p className="mb-1 text-[10px] font-bold tracking-wide text-[#839087] uppercase">Website</p><WebsiteCell business={business} /></div>
-              <div className="flex items-end justify-end">
+              <div><p className="mb-1 text-[10px] font-bold tracking-wide text-[#839087] uppercase">Opportunity</p><OpportunityCell business={business} /></div>
+              <div className="col-span-2 flex items-end justify-end">
                 <EnrichAction
                   business={business}
-                  enriching={enrichingSourceIds.has(business.sourceId)}
-                  error={enrichmentErrors[business.sourceId]}
+                  enriching={enrichingSourceIds.has(businessKey(business))}
+                  error={enrichmentErrors[businessKey(business)]}
                   onEnrich={onEnrich}
                 />
               </div>
@@ -218,24 +244,54 @@ export function BusinessTable({
       </div>
 
       <div className="hidden max-h-[70vh] overflow-auto md:block">
-        <table className="w-full min-w-[1180px] border-collapse text-left">
-            <thead>
-            <tr className="text-[11px] font-bold tracking-[0.055em] text-[#68756e] uppercase">
-              <th className="sticky top-0 z-10 bg-[#f8faf9] px-6 py-3.5">Business</th>
-              <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">Category</th>
-              <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">Location</th>
-              <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">Phone</th>
-              <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">Email</th>
-              <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">Website</th>
-              <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">Source</th>
-              <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">Action</th>
-              <th className="sticky top-0 z-10 w-10 bg-[#f8faf9] px-3 py-3.5"><span className="sr-only">Open details</span></th>
-            </tr>
-          </thead>
+        <table className="w-full min-w-[1280px] border-collapse text-left">
+          <thead>
+  <tr className="text-[11px] font-bold tracking-[0.055em] text-[#68756e] uppercase">
+    <th className="sticky top-0 z-10 bg-[#f8faf9] px-6 py-3.5">
+      Business
+    </th>
+
+    <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">
+      Category
+    </th>
+
+    <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">
+      Location
+    </th>
+
+    <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">
+      Phone
+    </th>
+
+    <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">
+      Email
+    </th>
+
+    <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">
+      Website
+    </th>
+
+    <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">
+      Opportunity
+    </th>
+
+    <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">
+      Source
+    </th>
+
+    <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">
+      Action
+    </th>
+
+    <th className="sticky top-0 z-10 w-10 bg-[#f8faf9] px-3 py-3.5">
+      <span className="sr-only">Open details</span>
+    </th>
+  </tr>
+</thead>
           <tbody className="divide-y divide-[#e8edea]">
             {businesses.map((business) => (
               <tr
-                key={business.sourceId}
+                key={businessKey(business)}
                 onClick={() => onSelect(business)}
                 className="group cursor-pointer text-sm transition hover:bg-[#f8fbf9]"
               >
@@ -250,7 +306,7 @@ export function BusinessTable({
                     </span>
                     <span className="min-w-0">
                       <span className="block truncate font-semibold text-[#1e2a24] group-hover:text-[#126848]">{business.name}</span>
-                      <span className="mt-0.5 block truncate text-xs text-[#849087]">{business.sourceId}</span>
+                      <span className="mt-0.5 block truncate text-xs text-[#849087]">{business.leadId ?? business.sourceId}</span>
                     </span>
                   </button>
                 </td>
@@ -259,6 +315,7 @@ export function BusinessTable({
                 <td className="px-4 py-4"><ContactCell kind="phone" value={business.phone} /></td>
                 <td className="px-4 py-4"><ContactCell kind="email" value={business.email} /></td>
                 <td className="px-4 py-4"><WebsiteCell business={business} /></td>
+                <td className="px-4 py-4"><OpportunityCell business={business} /></td>
                 <td className="px-4 py-4">
                   <span className="inline-flex items-center gap-1.5 text-xs font-semibold whitespace-nowrap text-[#4e5e56]">
                     <span className="size-1.5 rounded-full bg-[#33a678]" />
@@ -268,8 +325,8 @@ export function BusinessTable({
                 <td className="px-4 py-4">
                   <EnrichAction
                     business={business}
-                    enriching={enrichingSourceIds.has(business.sourceId)}
-                    error={enrichmentErrors[business.sourceId]}
+                    enriching={enrichingSourceIds.has(businessKey(business))}
+                    error={enrichmentErrors[businessKey(business)]}
                     onEnrich={onEnrich}
                   />
                 </td>
