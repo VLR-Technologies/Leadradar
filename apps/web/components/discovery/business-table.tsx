@@ -16,8 +16,10 @@ interface BusinessTableProps {
   businesses: Business[];
   enrichingSourceIds: ReadonlySet<string>;
   enrichmentErrors: Record<string, string>;
+  decisions: Record<string, "yes" | "no">;
   onSelect: (business: Business) => void;
   onEnrich: (business: Business) => void;
+  onDecision: (business: Business, value: "yes" | "no") => void;
 }
 
 function WebsiteCell({ business }: { business: Business }) {
@@ -119,6 +121,53 @@ function OpportunityCell({ business }: { business: Business }) {
   );
 }
 
+function DecisionCell({
+  business,
+  value,
+  onDecision,
+}: {
+  business: Business;
+  value?: "yes" | "no";
+  onDecision: (business: Business, value: "yes" | "no") => void;
+}) {
+  const base =
+    "inline-flex min-h-8 items-center justify-center rounded-lg border px-3 text-xs font-semibold transition";
+  return (
+    <div className="flex gap-1.5">
+      <button
+        type="button"
+        aria-pressed={value === "yes"}
+        onClick={(event) => {
+          event.stopPropagation();
+          onDecision(business, "yes");
+        }}
+        className={`${base} ${
+          value === "yes"
+            ? "border-[#9fc9b5] bg-[#e7f8ef] text-[#126b47]"
+            : "border-[#dfe5e2] bg-white text-[#66736c] hover:border-[#9fc9b5]"
+        }`}
+      >
+        Yes
+      </button>
+      <button
+        type="button"
+        aria-pressed={value === "no"}
+        onClick={(event) => {
+          event.stopPropagation();
+          onDecision(business, "no");
+        }}
+        className={`${base} ${
+          value === "no"
+            ? "border-[#d9aaa2] bg-[#fff1ed] text-[#9a493c]"
+            : "border-[#dfe5e2] bg-white text-[#66736c] hover:border-[#d9aaa2]"
+        }`}
+      >
+        No
+      </button>
+    </div>
+  );
+}
+
 function EnrichAction({
   business,
   enriching,
@@ -184,9 +233,11 @@ function EnrichAction({
 export function BusinessTable({
   businesses,
   enrichingSourceIds,
-  enrichmentErrors,
+    enrichmentErrors,
+  decisions,
   onSelect,
   onEnrich,
+  onDecision,
 }: BusinessTableProps) {
   return (
     <section
@@ -230,7 +281,12 @@ export function BusinessTable({
               <div><p className="mb-1 text-[10px] font-bold tracking-wide text-[#839087] uppercase">Email</p><ContactCell kind="email" value={business.email} /></div>
               <div><p className="mb-1 text-[10px] font-bold tracking-wide text-[#839087] uppercase">Website</p><WebsiteCell business={business} /></div>
               <div><p className="mb-1 text-[10px] font-bold tracking-wide text-[#839087] uppercase">Opportunity</p><OpportunityCell business={business} /></div>
-              <div className="col-span-2 flex items-end justify-end">
+              <div className="col-span-2 flex items-end justify-between gap-3">
+                <DecisionCell
+                  business={business}
+                  value={decisions[businessKey(business)]}
+                  onDecision={onDecision}
+                />
                 <EnrichAction
                   business={business}
                   enriching={enrichingSourceIds.has(businessKey(business))}
@@ -244,7 +300,7 @@ export function BusinessTable({
       </div>
 
       <div className="hidden max-h-[70vh] overflow-auto md:block">
-        <table className="w-full min-w-[1280px] border-collapse text-left">
+        <table className="w-full min-w-[1420px] border-collapse text-left">
           <thead>
   <tr className="text-[11px] font-bold tracking-[0.055em] text-[#68756e] uppercase">
     <th className="sticky top-0 z-10 bg-[#f8faf9] px-6 py-3.5">
@@ -281,6 +337,10 @@ export function BusinessTable({
 
     <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">
       Action
+    </th>
+
+    <th className="sticky top-0 z-10 bg-[#f8faf9] px-4 py-3.5">
+      Decision
     </th>
 
     <th className="sticky top-0 z-10 w-10 bg-[#f8faf9] px-3 py-3.5">
@@ -328,6 +388,13 @@ export function BusinessTable({
                     enriching={enrichingSourceIds.has(businessKey(business))}
                     error={enrichmentErrors[businessKey(business)]}
                     onEnrich={onEnrich}
+                  />
+                </td>
+                                <td className="px-4 py-4">
+                  <DecisionCell
+                    business={business}
+                    value={decisions[businessKey(business)]}
+                    onDecision={onDecision}
                   />
                 </td>
                 <td className="px-3 py-4"><ChevronRight aria-hidden="true" className="size-4 text-[#a1aba5] transition group-hover:translate-x-0.5 group-hover:text-[#177454]" /></td>
