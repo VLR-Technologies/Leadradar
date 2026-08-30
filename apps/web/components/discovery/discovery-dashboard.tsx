@@ -94,6 +94,7 @@ export function DiscoveryDashboard() {
   const [batchEnriching, setBatchEnriching] = useState(false);
   const [enrichingSourceIds, setEnrichingSourceIds] = useState<Set<string>>(new Set());
   const [enrichmentErrors, setEnrichmentErrors] = useState<Record<string, string>>({});
+  const [decisions, setDecisions] = useState<Record<string, "yes" | "no">>({});
   const locationRequestId = useRef(0);
 
   useEffect(() => {
@@ -214,6 +215,7 @@ export function DiscoveryDashboard() {
     setSelectedBusiness(null);
     setLeadFilter("all");
     setEnrichmentErrors({});
+    setDecisions({});
     try {
       const discovered = await discoverBusinesses(values);
       setResult(discovered);
@@ -255,6 +257,15 @@ export function DiscoveryDashboard() {
     } finally {
       setExporting(false);
     }
+  }
+
+      function handleDecision(business: Business, value: "yes" | "no") {
+    const key = businessKey(business);
+    setDecisions((current) =>
+      current[key] === value
+        ? Object.fromEntries(Object.entries(current).filter(([item]) => item !== key))
+        : { ...current, [key]: value },
+    );
   }
 
   async function handleEnrich(business: Business) {
@@ -329,7 +340,7 @@ export function DiscoveryDashboard() {
 
         {result ? (
           <div className="mt-8 space-y-6">
-            <ResultSummary summary={result.summary} query={result.query} />
+            <ResultSummary summary={result.summary} query={result.query} decisions={decisions} />
             <div className="grid gap-3 lg:grid-cols-2">
               {result.providers.map((provider) => (
                 <div key={provider.provider} className="rounded-xl border border-[#dfe7e3] bg-white px-4 py-3 text-sm">
@@ -351,7 +362,7 @@ export function DiscoveryDashboard() {
               </div>
             </div>
 
-            {pageLoading ? <div className="flex justify-center py-12" role="status"><LoaderCircle className="size-6 animate-spin text-[#177454]" /><span className="sr-only">Loading page</span></div> : result.businesses.length ? <BusinessTable businesses={result.businesses} enrichingSourceIds={enrichingSourceIds} enrichmentErrors={enrichmentErrors} onSelect={setSelectedBusiness} onEnrich={handleEnrich} /> : <div className="rounded-2xl border border-dashed border-[#cfdad4] bg-white px-6 py-12 text-center"><SearchX className="mx-auto size-6 text-[#738078]" /><p className="mt-3 font-semibold">No businesses match this filter.</p></div>}
+            {pageLoading ? <div className="flex justify-center py-12" role="status"><LoaderCircle className="size-6 animate-spin text-[#177454]" /><span className="sr-only">Loading page</span></div> : result.businesses.length ? <BusinessTable businesses={result.businesses} enrichingSourceIds={enrichingSourceIds} enrichmentErrors={enrichmentErrors} decisions={decisions} onSelect={setSelectedBusiness} onEnrich={handleEnrich} onDecision={handleDecision} /> : <div className="rounded-2xl border border-dashed border-[#cfdad4] bg-white px-6 py-12 text-center"><SearchX className="mx-auto size-6 text-[#738078]" /><p className="mt-3 font-semibold">No businesses match this filter.</p></div>}
 
             {result.totalPages > 1 ? (
               <nav aria-label="Results pagination" className="flex flex-wrap items-center justify-center gap-1.5">
