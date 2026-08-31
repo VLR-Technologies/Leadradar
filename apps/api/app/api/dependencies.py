@@ -9,9 +9,11 @@ from app.providers.enrichment.search import (
 from app.providers.enrichment.website import WebsiteEnrichmentProvider
 from app.providers.overpass import OverpassProvider
 from app.services.business_discovery import BusinessDiscoveryService
+from app.services.call_log import CallLogStore
 from app.services.business_enrichment import BusinessEnrichmentService
 from app.services.location_resolver import LocationResolver
 from app.services.search_sessions import SearchSessionStore
+from pathlib import Path
 
 
 @lru_cache
@@ -35,6 +37,12 @@ def get_discovery_service() -> BusinessDiscoveryService:
         oversample_factor=settings.discovery_oversample_factor,
         max_limit=settings.discovery_max_limit,
     )
+
+
+@lru_cache
+def get_call_log_store() -> CallLogStore:
+    settings: Settings = get_settings()
+    return CallLogStore(Path(settings.call_log_db_path))
 
 
 @lru_cache

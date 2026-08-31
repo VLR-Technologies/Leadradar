@@ -27,6 +27,7 @@ import {
   getSearchSession,
 } from "@/lib/api/businesses";
 import { ApiError } from "@/lib/api/client";
+import { recordCallDecision } from "@/lib/api/calls";
 import { getCities, getCountries, getRegions as getLocationRegions } from "@/lib/api/locations";
 import type {
   Business,
@@ -259,13 +260,26 @@ export function DiscoveryDashboard() {
     }
   }
 
-      function handleDecision(business: Business, value: "yes" | "no") {
+  function handleDecision(business: Business, value: "yes" | "no") {
     const key = businessKey(business);
+    const isClearing = decisions[key] === value;
     setDecisions((current) =>
       current[key] === value
-        ? Object.fromEntries(Object.entries(current).filter(([item]) => item !== key))
+        ? Object.fromEntries(
+            Object.entries(current).filter(([item]) => item !== key),
+          )
         : { ...current, [key]: value },
     );
+    if (!isClearing) {
+      void recordCallDecision({
+        lead_key: key,
+        business_name: business.name ?? "",
+        phone: business.phone ?? "",
+        decision: value,
+      }).catch((caught) => {
+        console.error("Could not record call decision", caught);
+      });
+    }
   }
 
   async function handleEnrich(business: Business) {

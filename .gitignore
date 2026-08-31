@@ -19,3 +19,7 @@ __pycache__/
 .duckdb/
 htmlcov/
 
+
+# Call log database
+apps/api/data/
+*.db

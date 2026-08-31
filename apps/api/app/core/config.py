@@ -1,4 +1,4 @@
-from functools import lru_cache
+﻿from functools import lru_cache
 
 from pydantic import AnyHttpUrl, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -133,6 +133,26 @@ class Settings(BaseSettings):
     cors_origins_raw: str = Field(
         default="http://localhost:3000",
         validation_alias="CORS_ORIGINS",
+    )
+    admin_api_key: str = Field(
+        default="",
+        validation_alias="ADMIN_API_KEY",
+    )
+    call_log_db_path: str = Field(
+        default="data/call_log.db",
+        validation_alias="CALL_LOG_DB_PATH",
+    )
+    call_log_retention_days: int = Field(
+        default=4,
+        ge=1,
+        le=90,
+        validation_alias="CALL_LOG_RETENTION_DAYS",
+    )
+    call_log_cleanup_interval_seconds: int = Field(
+        default=3_600,
+        ge=60,
+        le=86_400,
+        validation_alias="CALL_LOG_CLEANUP_INTERVAL_SECONDS",
     )
 
     @property
