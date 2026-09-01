@@ -1,13 +1,14 @@
-import { Building2, Globe2, GlobeLock, Mail, Phone, TrendingUp } from "lucide-react";
+import { Building2, CheckCircle2, Globe2, GlobeLock, Mail, Phone, Share2, TrendingUp, XCircle } from "lucide-react";
 
 import type { DiscoveryQuery, SearchSummary } from "@/types/business";
 
 interface ResultSummaryProps {
-  summary: SearchSummary;
+    summary: SearchSummary;
   query: DiscoveryQuery;
+  decisions: Record<string, "yes" | "no">;
 }
 
-export function ResultSummary({ summary, query }: ResultSummaryProps) {
+export function ResultSummary({ summary, query, decisions }: ResultSummaryProps) {
   const metrics = [
     {
       label: "Total businesses",
@@ -46,6 +47,9 @@ export function ResultSummary({ summary, query }: ResultSummaryProps) {
       iconClass: "bg-[#fff0e8] text-[#a64d20]",
     },
   ] as const;
+    const decisionValues = Object.values(decisions);
+  const yesCount = decisionValues.filter((value) => value === "yes").length;
+  const noCount = decisionValues.filter((value) => value === "no").length;
   const locationLabel = [query.city, query.region, query.country].filter(Boolean).join(", ");
 
   return (
@@ -62,7 +66,7 @@ export function ResultSummary({ summary, query }: ResultSummaryProps) {
         <p className="text-xs text-[#738078]">Opportunity is an internal sales heuristic, not a business-quality rating.</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-7">
         {metrics.map((metric) => {
           const Icon = metric.icon;
           return (
@@ -78,8 +82,29 @@ export function ResultSummary({ summary, query }: ResultSummaryProps) {
               </p>
               <p className="mt-1 text-xs font-medium text-[#6c7872] sm:text-sm">{metric.label}</p>
             </article>
-          );
+                    );
         })}
+        <article className="rounded-2xl border border-[#dfe7e3] bg-white p-4 shadow-[0_5px_20px_rgba(30,57,45,0.035)] sm:p-5">
+          <div className="mb-4 flex size-9 items-center justify-center rounded-xl bg-[#eaf8f1] text-[#177454]">
+            <Share2 aria-hidden="true" className="size-[18px]" />
+          </div>
+          <p className="text-2xl font-semibold tracking-[-0.03em] text-[#17211d] sm:text-[28px]">
+            {(yesCount + noCount).toLocaleString()}
+          </p>
+          <p className="mt-1 text-xs font-medium text-[#6c7872] sm:text-sm">Calls made today</p>
+          <div className="mt-3 flex items-center gap-4">
+            <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#177454]">
+              <CheckCircle2 aria-hidden="true" className="size-4" />
+              <span className="sr-only">Yes</span>
+              {yesCount.toLocaleString()}
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#b3453a]">
+              <XCircle aria-hidden="true" className="size-4" />
+              <span className="sr-only">No</span>
+              {noCount.toLocaleString()}
+            </span>
+          </div>
+        </article>
       </div>
     </section>
   );

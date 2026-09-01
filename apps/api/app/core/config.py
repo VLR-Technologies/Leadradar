@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import AnyHttpUrl, Field
+from pydantic import AliasChoices, AnyHttpUrl, Field, TypeAdapter, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -134,14 +134,55 @@ class Settings(BaseSettings):
         default="http://localhost:3000",
         validation_alias="CORS_ORIGINS",
     )
+    admin_api_key: str = Field(
+        default="",
+        validation_alias="ADMIN_API_KEY",
+    )
+    call_log_db_path: str = Field(
+        default="data/call_log.db",
+        validation_alias="CALL_LOG_DB_PATH",
+    )
+    call_log_retention_days: int = Field(
+        default=4,
+        ge=1,
+        le=90,
+        validation_alias="CALL_LOG_RETENTION_DAYS",
+    )
+    call_log_cleanup_interval_seconds: int = Field(
+        default=3_600,
+        ge=60,
+        le=86_400,
+        validation_alias="CALL_LOG_CLEANUP_INTERVAL_SECONDS",
+    )
+    supabase_url: str = Field(
+        default="",
+        validation_alias="SUPABASE_URL",
+    )
+    supabase_secret_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "SUPABASE_SECRET_KEY",
+            "SUPABASE_SERVICE_ROLE_KEY",
+        ),
+        repr=False,
+    )
+
+    @model_validator(mode="after")
+    def validate_supabase_configuration(self) -> "Settings":
+        self.supabase_url = self.supabase_url.strip().rstrip("/")
+        self.supabase_secret_key = self.supabase_secret_key.strip()
+        if bool(self.supabase_url) != bool(self.supabase_secret_key):
+            raise ValueError(
+                "SUPABASE_URL and SUPABASE_SECRET_KEY must be configured together "
+                "(SUPABASE_SERVICE_ROLE_KEY is accepted as a legacy key name)."
+            )
+        if self.supabase_url:
+            TypeAdapter(AnyHttpUrl).validate_python(self.supabase_url)
+        return self
 
     @property
     def cors_origins(self) -> list[str]:
-        return [
-            origin.strip()
-            for origin in self.cors_origins_raw.split(",")
-            if origin.strip()
-        ]
+        return [origin.strip() for origin in self.cors_origins_raw.split(",") if origin.strip()]
 
     @property
     def overpass_api_urls(self) -> tuple[str, ...]:
@@ -151,6 +192,10 @@ class Settings(BaseSettings):
             if value.strip()
         )
         return configured or (str(self.overpass_api_url),)
+
+    @property
+    def supabase_enabled(self) -> bool:
+        return bool(self.supabase_url and self.supabase_secret_key)
 
 
 @lru_cache

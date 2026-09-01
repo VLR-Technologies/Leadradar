@@ -11,14 +11,18 @@ from app.api.dependencies import (
     get_discovery_service,
     get_enrichment_service,
     get_search_session_store,
+    get_supabase_persistence_service,
 )
 from app.core.config import get_settings
+from app.db.supabase import SupabasePersistenceError, SupabasePersistenceService
 from app.models.business import (
     Business,
     BusinessAddress,
     FieldProvenance,
     WebsiteAudit,
 )
+from app.models.enrichment import EnrichmentResult
+from app.models.search_session import SearchSession
 from app.providers.base import (
     AllProvidersFailedError,
     LocationResolutionError,
@@ -59,6 +63,7 @@ from app.services.search_sessions import (
     SearchSessionCapacityError,
     SearchSessionNotFoundError,
     SearchSessionStore,
+    apply_enrichment_result,
     enrichment_progress,
 )
 
@@ -73,6 +78,13 @@ EnrichmentService = Annotated[
     Depends(get_enrichment_service),
 ]
 SessionStore = Annotated[SearchSessionStore, Depends(get_search_session_store)]
+PersistenceService = Annotated[
+    SupabasePersistenceService,
+    Depends(get_supabase_persistence_service),
+]
+_PERSISTENCE_WARNING = (
+    "Lead results were returned, but persistent storage is currently unavailable."
+)
 
 
 def _to_business(response: BusinessResponse) -> Business:
@@ -131,9 +143,7 @@ def _to_business(response: BusinessResponse) -> Business:
         },
         "enrichment_status": response.enrichment_status,
         "website_audit": (
-            WebsiteAudit(**response.website_audit.model_dump())
-            if response.website_audit
-            else None
+            WebsiteAudit(**response.website_audit.model_dump()) if response.website_audit else None
         ),
         "lead_score": response.lead_score,
         "opportunity_level": response.opportunity_level,
@@ -150,11 +160,10 @@ async def discover_businesses(
     request: DiscoverBusinessesRequest,
     service: DiscoveryService,
     sessions: SessionStore,
+    persistence: PersistenceService,
 ) -> DiscoverBusinessesResponse:
     effective_limit = (
-        get_settings().discovery_max_limit
-        if request.limit == "all"
-        else request.limit
+        get_settings().discovery_max_limit if request.limit == "all" else request.limit
     )
     try:
         result = await service.discover(
@@ -202,6 +211,7 @@ async def discover_businesses(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
+    await _persist_search_session(persistence, session)
     page = sessions.page(
         session.session_id,
         page=1,
@@ -223,13 +233,8 @@ def _session_page_response(page) -> DiscoverBusinessesResponse:
             limit=session.requested_limit,
         ),
         count=len(page.businesses),
-        businesses=[
-            BusinessResponse.model_validate(item)
-            for item in page.businesses
-        ],
-        providers=[
-            ProviderStatusResponse.model_validate(item) for item in session.providers
-        ],
+        businesses=[BusinessResponse.model_validate(item) for item in page.businesses],
+        providers=[ProviderStatusResponse.model_validate(item) for item in session.providers],
         warnings=list(session.warnings),
         session_id=session.session_id,
         page=page.page,
@@ -272,6 +277,7 @@ async def enrich_search_session(
     request: EnrichSearchSessionRequest,
     service: EnrichmentService,
     sessions: SessionStore,
+    persistence: PersistenceService,
 ) -> EnrichSearchSessionResponse:
     try:
         _, businesses = sessions.enrichment_candidates(
@@ -284,6 +290,12 @@ async def enrich_search_session(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     results = await service.enrich_batch(businesses) if businesses else []
     session = sessions.apply_enrichment_results(session_id, results)
+    await _persist_enrichment(
+        persistence,
+        session,
+        source_ids={result.source_id for result in results},
+        enrichment_results=results,
+    )
     return EnrichSearchSessionResponse(
         session_id=session_id,
         attempted=len(businesses),
@@ -317,8 +329,15 @@ async def export_search_session(
 async def enrich_business(
     request: EnrichBusinessRequest,
     service: EnrichmentService,
+    persistence: PersistenceService,
 ) -> EnrichBusinessResponse:
-    result = await service.enrich(_to_business(request.business))
+    business = _to_business(request.business)
+    result = await service.enrich(business)
+    await _persist_businesses(
+        persistence,
+        [apply_enrichment_result(business, result)],
+        enrichment_results=[result],
+    )
     return EnrichBusinessResponse.model_validate(result)
 
 
@@ -326,16 +345,26 @@ async def enrich_business(
 async def enrich_businesses_batch(
     request: EnrichBusinessesBatchRequest,
     service: EnrichmentService,
+    persistence: PersistenceService,
 ) -> EnrichBusinessesBatchResponse:
+    businesses = [_to_business(business) for business in request.businesses]
     try:
-        results = await service.enrich_batch(
-            [_to_business(business) for business in request.businesses]
-        )
+        results = await service.enrich_batch(businesses)
     except EnrichmentBatchLimitError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
+    result_by_source = {result.source_id: result for result in results}
+    await _persist_businesses(
+        persistence,
+        [
+            apply_enrichment_result(business, result_by_source[business.source_id])
+            for business in businesses
+            if business.source_id in result_by_source
+        ],
+        enrichment_results=results,
+    )
     return EnrichBusinessesBatchResponse(
         results=[EnrichBusinessResponse.model_validate(result) for result in results]
     )
@@ -363,3 +392,61 @@ def _workbook_response(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+def _add_persistence_warning(session: SearchSession) -> None:
+    if _PERSISTENCE_WARNING not in session.warnings:
+        session.warnings = (*session.warnings, _PERSISTENCE_WARNING)
+
+
+async def _persist_search_session(
+    persistence: SupabasePersistenceService,
+    session: SearchSession,
+) -> None:
+    try:
+        await persistence.persist_search_session(session)
+    except SupabasePersistenceError:
+        logger.exception(
+            "supabase.persistence_failed",
+            extra={"operation": "discovery", "session_id": session.session_id},
+        )
+        _add_persistence_warning(session)
+
+
+async def _persist_enrichment(
+    persistence: SupabasePersistenceService,
+    session: SearchSession,
+    *,
+    source_ids: set[str],
+    enrichment_results: list[EnrichmentResult],
+) -> None:
+    try:
+        await persistence.persist_enrichment(
+            session,
+            source_ids=source_ids,
+            enrichment_results=enrichment_results,
+        )
+    except SupabasePersistenceError:
+        logger.exception(
+            "supabase.persistence_failed",
+            extra={"operation": "enrichment", "session_id": session.session_id},
+        )
+        _add_persistence_warning(session)
+
+
+async def _persist_businesses(
+    persistence: SupabasePersistenceService,
+    businesses: list[Business],
+    *,
+    enrichment_results: list[EnrichmentResult],
+) -> None:
+    try:
+        await persistence.persist_businesses(
+            businesses,
+            enrichment_results=enrichment_results,
+        )
+    except SupabasePersistenceError:
+        logger.exception(
+            "supabase.persistence_failed",
+            extra={"operation": "standalone_enrichment"},
+        )

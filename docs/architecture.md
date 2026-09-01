@@ -1,6 +1,6 @@
 # LeadRadar architecture
 
-LeadRadar 0.2 is a transient, India-first, multi-provider pipeline. Each layer depends on source-neutral models rather than an upstream provider's raw shape.
+LeadRadar 0.2 is an India-first, multi-provider pipeline. Each layer depends on source-neutral models rather than an upstream provider's raw shape.
 
 ```text
 Next.js dashboard
@@ -22,6 +22,12 @@ FastAPI routes
     |      +-- server pagination, filters, summary, progress
     |      +-- complete filtered export view
     |
+    +-- SupabasePersistenceService
+    |      +-- backend-only PostgREST client
+    |      +-- search-session upsert
+    |      +-- eligible-lead upsert by stable lead_id
+    |      +-- post-enrichment updates
+    |
     +-- BusinessEnrichmentService
     |      +-- optional SearXNG candidate discovery
     |      +-- WebsiteEnrichmentProvider
@@ -30,7 +36,7 @@ FastAPI routes
     +-- ExcelExportService --> in-memory .xlsx stream
 ```
 
-There is no persistence layer. A discovery result is cached in a bounded process-local session for a configurable absolute TTL (default 30 minutes), then expired. The store also evicts oldest sessions to enforce active-session and total-record bounds. API restart loses every session.
+Discovery results are cached in a bounded process-local session for a configurable absolute TTL (default 30 minutes), then expired. The store also evicts oldest sessions to enforce active-session and total-record bounds. API restart loses runtime sessions, but the optional backend-only Supabase layer retains search metadata and eligible lead rows.
 
 ## Boundaries
 
@@ -41,6 +47,24 @@ There is no persistence layer. A discovery result is cached in a bounded process
 - `app/models` is the source-neutral domain contract.
 - `app/schemas` is the camelCase public API contract.
 - `app/core` centralizes settings, the bundled India location index, website classification, and category mappings.
+- `app/db` owns database mapping, eligibility enforcement, PostgREST communication, upserts, and safe persistence errors.
+
+## Persistence and failure isolation
+
+The Next.js application still talks only to FastAPI. FastAPI uses `SUPABASE_URL` and a
+backend-only secret key to upsert `search_sessions` by `session_id` and `leads` by the
+existing deduplicated `lead_id`. Variable lists and provider/enrichment metadata remain
+JSONB so the source-neutral model is not flattened or discarded.
+
+The primary `leads` table accepts only normalized records with a stable lead ID and at
+least one public phone, email, or official website. Non-contactable candidates remain
+available in the runtime session for controlled enrichment. When enrichment establishes
+a contact path, the updated record becomes eligible and is upserted.
+
+Persistence deliberately degrades gracefully: provider results and runtime sessions
+remain usable if Supabase fails, a safe error is logged, and the session receives a
+persistence warning. Database writes are idempotent, so a later retry refreshes the row.
+RLS is enabled with no browser policies; `anon` and `authenticated` grants are revoked.
 
 ## Discovery providers and failure isolation
 
@@ -138,7 +162,7 @@ The workbook is created entirely in memory. Text beginning with spreadsheet form
 
 The Next.js dashboard is India-first and consumes backend location/category catalogues. City keystrokes query only the local API's bundled GeoNames index through an accessible debounced combobox. After discovery it displays provider raw/accepted counts, source-neutral missing-data language, exact server summary cards, one result page, and bounded enrichment progress. Filters, pagination, and Excel export are server-side. The detail drawer distinguishes official websites, directory/social presence, WhatsApp, contacts, location, audit, opportunity reasons, and source-page provenance.
 
-No database, local lead file, browser profile, cookie, or credential is persisted by the application. Search-session state exists only in bounded API-process memory until expiry/eviction/restart.
+No database credential, browser profile, cookie, or lead record is stored by the Next.js application. Runtime search-session state stays in bounded API-process memory until expiry/eviction/restart; configured Supabase persistence is written only by FastAPI.
 
 ## Known limits
 
@@ -149,4 +173,4 @@ No database, local lead file, browser profile, cookie, or credential is persiste
 - Static HTML inspection does not cover JavaScript-only contact content.
 - SearXNG is optional and must be self-hosted/configured.
 - Ratings/reviews remain null without a legitimate source.
-- Playwright fallback, permanent storage, scheduled crawling, outreach, and paid/restricted data integrations are intentionally not implemented.
+- Playwright fallback, scheduled crawling, outreach, and paid/restricted data integrations are intentionally not implemented.
