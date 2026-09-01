@@ -1,6 +1,8 @@
 from functools import lru_cache
+from pathlib import Path
 
 from app.core.config import Settings, get_settings
+from app.db.supabase import SupabaseClient, SupabasePersistenceService
 from app.providers.discovery.overture import OvertureMapsProvider
 from app.providers.enrichment.search import (
     DisabledBusinessSearchProvider,
@@ -9,11 +11,10 @@ from app.providers.enrichment.search import (
 from app.providers.enrichment.website import WebsiteEnrichmentProvider
 from app.providers.overpass import OverpassProvider
 from app.services.business_discovery import BusinessDiscoveryService
-from app.services.call_log import CallLogStore
 from app.services.business_enrichment import BusinessEnrichmentService
+from app.services.call_log import CallLogStore
 from app.services.location_resolver import LocationResolver
 from app.services.search_sessions import SearchSessionStore
-from pathlib import Path
 
 
 @lru_cache
@@ -74,4 +75,17 @@ def get_enrichment_service() -> BusinessEnrichmentService:
         search_provider=search_provider,
         batch_limit=settings.enrichment_batch_limit,
         max_concurrency=settings.enrichment_max_concurrency,
+    )
+
+
+@lru_cache
+def get_supabase_persistence_service() -> SupabasePersistenceService:
+    settings: Settings = get_settings()
+    if not settings.supabase_enabled:
+        return SupabasePersistenceService()
+    return SupabasePersistenceService(
+        SupabaseClient(
+            url=settings.supabase_url,
+            secret_key=settings.supabase_secret_key,
+        )
     )

@@ -1,8 +1,8 @@
 # LeadRadar
 
-LeadRadar is VLR Technologies' internal, India-first lead-discovery application. It combines real public business listings from Overture Maps Places and OpenStreetMap, preserves source provenance, safely inspects known official websites, highlights digital-service opportunities, and exports complete filtered search sessions to Excel.
+LeadRadar is VLR Technologies' internal, India-first lead-discovery application. It combines real public business listings from Overture Maps Places and OpenStreetMap, preserves source provenance, safely inspects known official websites, highlights digital-service opportunities, persists eligible leads through FastAPI to Supabase, and exports complete filtered search sessions to Excel.
 
-The core workflow uses only free/open components. It requires no database, paid Maps API, API-credit service, proxy network, or commercial lead database. Results remain temporary in bounded, expiring in-memory API sessions.
+The discovery workflow uses free/open providers. Bounded, expiring in-memory API sessions remain the fast paging layer; optional Supabase persistence stores search metadata and eligible leads without exposing database credentials to the browser.
 
 ## How it works
 
@@ -27,9 +27,9 @@ BusinessDiscoveryService
                  v
  bounded in-memory search session
                  v
- server pagination/filter/export + controlled enrichment batches
+ backend-only Supabase upsert + server pagination/filter/export
                  v
- detail drawer and full filtered Excel download
+ controlled enrichment updates + detail drawer / Excel download
 ```
 
 Provider failures are isolated. For example, an Overpass timeout is reported in `warnings` while valid Overture results remain usable. A discovery request fails only when no configured provider returns a usable response.
@@ -114,12 +114,14 @@ Backend variables are documented in `apps/api/.env.example`:
 - `SEARXNG_BASE_URL`: optional URL of a self-hosted SearXNG service. Leave blank to disable search discovery.
 - `SEARCH_PROVIDER`: legacy descriptive setting; it does not enable a network provider by itself.
 - `CORS_ORIGINS`: comma-separated frontend origins.
+- `SUPABASE_URL`: backend Supabase project URL; leave blank with the key to disable persistence.
+- `SUPABASE_SECRET_KEY`: backend-only Supabase secret key. `SUPABASE_SERVICE_ROLE_KEY` is accepted as a legacy fallback.
 
 Frontend:
 
 - `NEXT_PUBLIC_API_URL`: browser-visible API URL, normally `http://localhost:8000`.
 
-No variable requires a secret for the core Overture + OSM flow. Never commit local `.env` files.
+No variable requires a secret for the core Overture + OSM flow. Supabase persistence is disabled when both Supabase settings are blank. Never commit local `.env` files. Apply the migration and follow the verification queries in [docs/supabase.md](docs/supabase.md).
 
 ## API
 
@@ -243,10 +245,10 @@ LEADRADAR_RUN_LIVE_TESTS=1 python -m pytest tests/integration/test_overture_live
 6. Open a row to inspect contacts, location, digital audit, score reasons, source IDs, and field provenance.
 7. Change pages and page size, then select **Download all filtered**. The workbook contains the entire filtered session, not only the visible page.
 
-Expected fields include business name/category, phones and normalized phones, emails, website/status, locality/city/district/state/PIN, coordinates, social links, optional rating fields, confidence, discovery sources and IDs, per-field provenance, enrichment state, audit signals, lead score, opportunity level/reasons, and scrape timestamp.
+Expected fields include business name/category, phones and normalized phones, emails, website/status, locality/city/district/state/PIN, coordinates, social links, optional rating fields, confidence, discovery sources and IDs, per-field provenance, enrichment state, audit signals, lead score, opportunity level/reasons, and scrape timestamp. When Supabase is configured, eligible rows also appear in `public.leads` and the search metadata appears in `public.search_sessions`.
 
 ## Responsible use and known limitations
 
 LeadRadar is for VLR's internal, responsible use of open listings and public business contact details. Do not use it to bypass CAPTCHAs, authentication, rate limits, robots policies, or platform terms; do not collect unrelated personal data.
 
-Coverage depends on the upstream open datasets and public business websites. Overture availability requires current release/schema compatibility and network access to its public S3 data. Public Overpass endpoints can be slow or unavailable. The static crawler cannot extract contacts rendered only by JavaScript. Search sessions expire and disappear on API restart. Live ratings, persistent storage, scheduled crawling, automatic outreach, and Playwright fallback are intentionally absent or optional.
+Coverage depends on the upstream open datasets and public business websites. Overture availability requires current release/schema compatibility and network access to its public S3 data. Public Overpass endpoints can be slow or unavailable. The static crawler cannot extract contacts rendered only by JavaScript. Runtime search sessions expire and disappear on API restart, while configured Supabase records remain persistent. Live ratings, scheduled crawling, automatic outreach, and Playwright fallback are intentionally absent or optional.
